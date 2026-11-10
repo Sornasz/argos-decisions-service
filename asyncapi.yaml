@@ -1,0 +1,131 @@
+asyncapi: 2.6.0
+info:
+  title: Argos TransactionScored
+  version: 1.0.0
+  description: >-
+    Evento publicado pelo fraud-scoring-service a cada decisão de fraude e consumido pelo
+    decisions-service, que grava a decisão e, quando ela é negada, dispara o alerta de fraude.
+servers:
+  service-bus:
+    url: '{namespace}.servicebus.windows.net'
+    protocol: amqps
+    description: Azure Service Bus (tópico com a subscription decision-audit).
+    variables:
+      namespace:
+        default: argos-sb
+channels:
+  transaction-scored:
+    description: >-
+      Tópico transaction-scored. A entrega é "pelo menos uma vez": o decisions-service é idempotente
+      pelo ID da transação. Evento inválido vai para a dead letter da subscription; falha ao gravar
+      devolve a mensagem para a fila.
+    subscribe:
+      operationId: receiveTransactionScored
+      summary: Recebe uma decisão de fraude.
+      message:
+        $ref: '#/components/messages/TransactionScored'
+components:
+  messages:
+    TransactionScored:
+      name: TransactionScored
+      title: Transação pontuada
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/TransactionScored'
+      examples:
+        - name: negada
+          payload:
+            eventId: b2d1c8e0-3a64-4f0e-9a33-7c1e55a0d9f2
+            eventType: TransactionScored
+            schemaVersion: 1
+            occurredAt: '2026-11-09T13:20:41.368Z'
+            transactionId: tx-1329056812
+            decision:
+              approved: false
+              fraudScore: 0.8
+              approvalThreshold: 0.6
+            featureVector: [0.95, 1, 0, 0.13, 0.75, -1, -1, 1, 1, 0, 0.8, 0.25, 0.1, 0.05]
+            neighbors:
+              - { referenceId: 120233, distance: 0.04, label: fraud }
+              - { referenceId: 884120, distance: 0.06, label: fraud }
+              - { referenceId: 45012, distance: 0.07, label: fraud }
+              - { referenceId: 700391, distance: 0.09, label: fraud }
+              - { referenceId: 310044, distance: 0.11, label: legit }
+            referenceIndexVersion: 'sha256:c4e472531de1'
+            transaction:
+              amount: 9500
+              installments: 12
+              requestedAt: '2026-11-09T13:20:40Z'
+              customer: { avgAmount: 100, txCount24h: 20, knownMerchants: [] }
+              merchant: { id: MERC-Z, mcc: '7995', avgAmount: 50 }
+              terminal: { isOnline: true, cardPresent: false, kmFromHome: 900 }
+              lastTransaction: null
+  schemas:
+    TransactionScored:
+      type: object
+      required:
+        [eventId, eventType, schemaVersion, occurredAt, transactionId, decision, featureVector, neighbors, referenceIndexVersion, transaction]
+      properties:
+        eventId: { type: string, maxLength: 64 }
+        eventType: { type: string, const: TransactionScored }
+        schemaVersion: { type: integer, const: 1 }
+        occurredAt: { type: string, format: date-time }
+        transactionId: { type: string, maxLength: 128 }
+        decision:
+          type: object
+          required: [approved, fraudScore, approvalThreshold]
+          properties:
+            approved: { type: boolean }
+            fraudScore: { type: number, minimum: 0, maximum: 1, description: Fração de fraudes entre os 5 vizinhos. }
+            approvalThreshold: { type: number, exclusiveMinimum: 0, maximum: 1 }
+        featureVector:
+          type: array
+          description: 14 dimensões; os índices 5 e 6 valem -1 quando não há transação anterior.
+          minItems: 14
+          maxItems: 14
+          items: { type: number, minimum: -1, maximum: 1 }
+        neighbors:
+          type: array
+          minItems: 5
+          maxItems: 5
+          items:
+            type: object
+            required: [referenceId, distance, label]
+            properties:
+              referenceId: { type: integer, minimum: 0 }
+              distance: { type: number, minimum: 0 }
+              label: { type: string, enum: [fraud, legit] }
+        referenceIndexVersion: { type: [string, 'null'], maxLength: 64 }
+        transaction:
+          type: object
+          required: [amount, installments, requestedAt, customer, merchant, terminal, lastTransaction]
+          properties:
+            amount: { type: number, minimum: 0 }
+            installments: { type: integer, minimum: 1 }
+            requestedAt: { type: string, format: date-time }
+            customer:
+              type: object
+              required: [avgAmount, txCount24h, knownMerchants]
+              properties:
+                avgAmount: { type: number, minimum: 0 }
+                txCount24h: { type: integer, minimum: 0 }
+                knownMerchants: { type: array, items: { type: string } }
+            merchant:
+              type: object
+              required: [id, mcc, avgAmount]
+              properties:
+                id: { type: string, maxLength: 128 }
+                mcc: { type: string, pattern: '^\d{4}$' }
+                avgAmount: { type: number, minimum: 0 }
+            terminal:
+              type: object
+              required: [isOnline, cardPresent, kmFromHome]
+              properties:
+                isOnline: { type: boolean }
+                cardPresent: { type: boolean }
+                kmFromHome: { type: number, minimum: 0 }
+            lastTransaction:
+              type: [object, 'null']
+              properties:
+                timestamp: { type: string, format: date-time }
+                kmFromCurrent: { type: number, minimum: 0 }
